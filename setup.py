@@ -10,5 +10,6 @@ setup(name='Configurable JSON',
       author_email='contact@trialandsuccess.nl',
       url='https://github.com/trialandsuccess/configurablejson',
       packages=['configurablejson'],
-      long_description=long_desc
+      long_description=long_desc,
+      long_description_content_type="text/markdown",
       )
