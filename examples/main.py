@@ -1,5 +1,7 @@
 import json
 import typing
+from datetime import datetime
+
 from configurablejson import ConfigurableJsonEncoder, JSONRule
 
 
@@ -77,7 +79,7 @@ class MyEncoder(ConfigurableJsonEncoder):
             set: JSONRule(preprocess=lambda o: list(o)),
             # convert namedtuple to dict
             typing.NamedTuple: JSONRule(preprocess=self._default),
-        }.get(_type, JSONRule(transform=self._default) if with_default else None)
+        }.get(_type, JSONRule(preprocess=self._default) if with_default else None)
 
 
 class Letters(typing.NamedTuple):
@@ -86,34 +88,27 @@ class Letters(typing.NamedTuple):
     c: str
 
 
+class ComplexTupleChild(typing.NamedTuple):
+    d: dict[str, dict]
+    l: list[dict]
+    t: tuple
+    s: dict[str, set]
+    dt: datetime
+
+
+class ComplexTupleParent(typing.NamedTuple):
+    child: ComplexTupleChild
+
+
 if __name__ == '__main__':
-    data = {
-        'original': ['behavior'],
-        'set': {1, 2, 3},
-        'namedtuple': Letters('a', 'b', 'c'),
-        "class": MyClass()
-    }
-    try:
-        print(json.dumps(data))
-    except TypeError:
-        ...  # Object of type set is not JSON serializable
+    data = ComplexTupleParent(ComplexTupleChild(
+        {'a': {'b': ['c']}},
+        [{'d': 'e'}],
+        (1, [], {}, set()),
+        {'a': set([1, 2, 3])},
+        datetime.today()
+    ))
 
-    # default behavior without type error:
-    print(json.dumps(data, default=str))
-    # {"original": ["behavior"], "set": "{1, 2, 3}", "namedtuple": ["a", "b", "c"], "class": "<__main__.MyClass object at 0x...>"}
-
-    # the same behavior as above
-    print(json.dumps(data, cls=DummyEncoder))
-    # {"original": ["behavior"], "set": "{1, 2, 3}", "namedtuple": ["a", "b", "c"], "class": "<__main__.MyClass object at 0x...>"}
-
-    # encodes set into a list:
-    print(json.dumps(data, cls=SetEncoder))
-    # {"original": ["behavior"], "set": [1, 2, 3], "namedtuple": ["a", "b", "c"], "class": "<__main__.MyClass object at 0x...>"}
-
-    # calls .tojson() which uses transform to output a string
-    print(json.dumps(data, cls=ToJSONEncoder))
-    # {"original": ["behavior"], "set": "{1, 2, 3}", "namedtuple": ["a", "b", "c"], "class": ["my", "data", "as", "json"]}
-
-    # converts namedtuple to a dictionary instead of a list (the default behavior)
-    print(json.dumps(data, cls=MyEncoder))
-    # {"original": ["behavior"], "set": [1, 2, 3], "namedtuple": {"a": "a", "b": "b", "c": "c"}, "class": {"my data": ["as", "a", "dict"]}}
+    print(
+        json.dumps(data, cls=MyEncoder)
+    )

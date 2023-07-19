@@ -1,48 +1,97 @@
-# json_extra
-
-import dataclasses
 import json.encoder as e
-from abc import ABC, abstractmethod
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    Generator,
+    Optional,
+    Protocol,
+    Type,
+    TypeVar,
+)
 
-import typing
+try:
+    from _json import encode_basestring, encode_basestring_ascii  # type: ignore
+except ImportError:
+    encode_basestring_ascii = e.py_encode_basestring_ascii
+    encode_basestring = e.py_encode_basestring
+
+if TYPE_CHECKING:
+    from .encode import JSONRule
+
+__all__ = ["_make_iterencode", "encode_basestring_ascii", "encode_basestring", "ReprMethod"]
+
+ReprMethod = Callable[..., str]
 
 
-@dataclasses.dataclass
-class JSONRule:
-    preprocess: typing.Callable[[typing.Any], typing.Any] = None
-    transform: typing.Callable[[typing.Any], str] = None
+class FloatstrMethod(Protocol):
+    def __call__(
+        self,
+        o: Any,
+        allow_nan: bool = False,
+        _repr: ReprMethod = float.__repr__,
+        _inf: float = float("inf"),
+        _neginf: float = -float("inf"),
+    ) -> str:
+        ...
+
+
+IterencodeGenerator = Generator[str, None, None]
+Iterencode = Callable[[Any, int], IterencodeGenerator]
+
+K = TypeVar("K")
+V = TypeVar("V")
+
+Int = int
+T_int = type[Int]
+Float = float
+T_float = Type[Float]
+Str = str
+T_str = Type[Str]
+Tuple = tuple[Any, ...]
+T_tuple = type[Tuple]
+List = list[Any]
+T_list = type[List]
+Dict = dict[K, V]
+T_dict = type[Dict[K, V]]
 
 
 def _make_iterencode(
-        rule_cb,
-        markers,
-        _default,
-        _encoder,
-        _indent,
-        _floatstr,
-        _key_separator,
-        _item_separator,
-        _sort_keys,
-        _skipkeys,
-        _one_shot,
-        ## HACK: hand-optimized bytecode; turn globals into locals
-        ValueError=ValueError,
-        dict=dict,
-        float=float,
-        id=id,
-        int=int,
-        isinstance=isinstance,
-        list=list,
-        str=str,
-        tuple=tuple,
-        _intstr=int.__repr__,
-):
-    # stolen from json.encoder and changed
-
+    rule_cb: Callable[..., "JSONRule"],
+    markers: Optional[dict[int, Any]],
+    _default: Callable[[Any], dict[str, Any] | list[Any] | str],
+    _encoder: Callable[[str], str],
+    _indent: Int | Str,
+    _floatstr: FloatstrMethod,
+    _key_separator: str,
+    _item_separator: str,
+    _sort_keys: bool,
+    _skipkeys: bool,
+    _one_shot: bool,
+    ## HACK: hand-optimized bytecode; turn globals into locals
+    ValueError: type[Exception] = ValueError,  # noqa: A002
+    dict: T_dict[Any, Any] = dict,  # noqa: A002
+    float: T_float = float,  # noqa: A002
+    id: Callable[[Any], int] = id,  # noqa: A002
+    int: T_int = int,  # noqa: A002
+    isinstance: Callable[[Any, type | tuple[type, ...]], bool] = isinstance,  # noqa: A002
+    list: T_list = list,  # noqa: A002
+    str: T_str = str,  # noqa: A002
+    tuple: T_tuple = tuple,  # noqa: A002
+    _intstr: Callable[[Any], str] = int.__repr__,
+) -> Iterencode:
+    """
+    Stolen from json.encoder and changed.
+    """
     if _indent is not None and not isinstance(_indent, str):
-        _indent = " " * _indent
+        indent_str = " " * _indent  # type: ignore
+    else:
+        indent_str: str = _indent  # type: ignore
 
-    def _iterencode_list(lst, _current_indent_level):
+    def _iterencode_list(
+        lst: List,
+        _current_indent_level: Int,
+    ) -> IterencodeGenerator:
         if not lst:
             yield "[]"
             return
@@ -52,9 +101,9 @@ def _make_iterencode(
                 raise ValueError("Circular reference detected")
             markers[markerid] = lst
         buf = "["
-        if _indent is not None:
+        if indent_str is not None:
             _current_indent_level += 1
-            newline_indent = "\n" + _indent * _current_indent_level
+            newline_indent = "\n" + indent_str * _current_indent_level
             separator = _item_separator + newline_indent
             buf += newline_indent
         else:
@@ -104,12 +153,12 @@ def _make_iterencode(
                 yield from chunks
         if newline_indent is not None:
             _current_indent_level -= 1
-            yield "\n" + _indent * _current_indent_level
+            yield "\n" + indent_str * _current_indent_level
         yield "]"
         if markers is not None:
             del markers[markerid]
 
-    def _iterencode_dict(dct, _current_indent_level):
+    def _iterencode_dict(dct: Dict[Any, Any], _current_indent_level: Int) -> IterencodeGenerator:
         if not dct:
             yield "{}"
             return
@@ -119,21 +168,19 @@ def _make_iterencode(
                 raise ValueError("Circular reference detected")
             markers[markerid] = dct
         yield "{"
-        if _indent is not None:
+        if indent_str is not None:
             _current_indent_level += 1
-            newline_indent = "\n" + _indent * _current_indent_level
+            newline_indent = "\n" + indent_str * _current_indent_level
             item_separator = _item_separator + newline_indent
             yield newline_indent
         else:
             newline_indent = None
             item_separator = _item_separator
         first = True
-        if _sort_keys:
-            items = sorted(dct.items())
-        else:
-            items = dct.items()
-        for key, value in items:
 
+        items = sorted(dct.items()) if _sort_keys else dct.items()
+
+        for key, value in items:
             # CHANGED FROM HERE:
             extra_rule: JSONRule = rule_cb(key, with_default=False)
 
@@ -163,10 +210,7 @@ def _make_iterencode(
             elif _skipkeys:
                 continue
             else:
-                raise TypeError(
-                    f"keys must be str, int, float, bool or None, "
-                    f"not {key.__class__.__name__}"
-                )
+                raise TypeError(f"keys must be str, int, float, bool or None, " f"not {key.__class__.__name__}")
             if first:
                 first = False
             else:
@@ -175,7 +219,7 @@ def _make_iterencode(
             yield _key_separator
 
             # CHANGED FROM HERE:
-            extra_rule: JSONRule = rule_cb(value, with_default=False)
+            extra_rule = rule_cb(value, with_default=False)
 
             if extra_rule and extra_rule.preprocess:
                 value = extra_rule.preprocess(value)
@@ -208,12 +252,12 @@ def _make_iterencode(
                 yield from chunks
         if newline_indent is not None:
             _current_indent_level -= 1
-            yield "\n" + _indent * _current_indent_level
+            yield "\n" + indent_str * _current_indent_level
         yield "}"
         if markers is not None:
             del markers[markerid]
 
-    def _iterencode(o, _current_indent_level):
+    def _iterencode(o: Any, _current_indent_level: Int) -> IterencodeGenerator:
         # CHANGED FROM HERE:
         extra_rule: JSONRule = rule_cb(o, with_default=False)
 
@@ -255,92 +299,3 @@ def _make_iterencode(
                 del markers[markerid]
 
     return _iterencode
-
-
-class ConfigurableJsonEncoder(e.JSONEncoder, ABC):
-    """
-    You can extend this JSON Encoder with your own rules(obj) method that returns a JSONRule,
-    which has a preprocess and/or a transform method.
-    """
-
-    @abstractmethod
-    def rules(self, o) -> JSONRule:
-        """
-        Should return a JSONRule with either a preprocess and/or a transorm method.
-        The preprocess will run before the transform and any regular encoding logic.
-         This can be useful to e.g. convert a set() to a list() before encoding it and its contents,
-
-        the transform will run after the preprocess and instead of regular json encoding logic.
-        This can be useful to fully overwrite the logic on some object (type)
-
-
-        """
-
-        raise NotImplementedError("Please implement rules after extending this class.")
-
-    def default(self, o) -> str:
-        rule: JSONRule = self.rules(o)
-
-        if rule and rule.preprocess:
-            o = rule.preprocess(o)
-
-        if rule and rule.transform:
-            return rule.transform(o)
-
-        return str(o)
-
-    def iterencode(self, o, _one_shot=False):
-        # copied from json.encoder
-
-        if self.check_circular:
-            markers = {}
-        else:
-            markers = None
-        if self.ensure_ascii:
-            _encoder = e.encode_basestring_ascii
-        else:
-            _encoder = e.encode_basestring
-
-        def floatstr(
-                o,
-                allow_nan=self.allow_nan,
-                _repr=float.__repr__,
-                _inf=e.INFINITY,
-                _neginf=-e.INFINITY,
-        ):
-            # Check for specials.  Note that this type of test is processor
-            # and/or platform-specific, so do tests which don't depend on the
-            # internals.
-
-            if o != o:
-                text = "NaN"
-            elif o == _inf:
-                text = "Infinity"
-            elif o == _neginf:
-                text = "-Infinity"
-            else:
-                return _repr(o)
-
-            if not allow_nan:
-                raise ValueError(
-                    "Out of range float values are not JSON compliant: " + repr(o)
-                )
-
-            return text
-
-        # never use c_iterencode
-        _iterencode = _make_iterencode(
-            self.rules,
-            markers,
-            self.default,
-            _encoder,
-            self.indent,
-            floatstr,
-            self.key_separator,
-            self.item_separator,
-            self.sort_keys,
-            self.skipkeys,
-            _one_shot,
-        )
-
-        return _iterencode(o, 0)
